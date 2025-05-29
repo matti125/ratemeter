@@ -12,6 +12,10 @@ from scipy.stats import linregress
 import argparse
 import subprocess
 
+def log_error(message, quiet):
+    if not quiet:
+        print(f"[ERROR] {message}", file=sys.stderr)
+
 OUTPUT_DIR = "/home/pi/ratemeter"
 FILE_SHORTTERM = f"{OUTPUT_DIR}/shortterm"
 FILE_SMOOTHED = f"{OUTPUT_DIR}/smoothed"
@@ -46,17 +50,18 @@ def open_or_create_file(path):
 
 
 
-def get_distance():
+def get_distance(quiet):
     try:
         resp = requests.get(f"{HOST}/printer/objects/query?beacon", timeout=2)
         resp.raise_for_status()
         data = resp.json()
         sample = data["result"]["status"]["beacon"].get("last_received_sample")
         if not sample or "dist" not in sample:
-            raise KeyError("dist not in last_received_sample")
+            log_error("dist not in last_received_sample", quiet)
+            return None
         return float(sample["dist"])
     except Exception as e:
-        print(f"Error querying distance: {e}", file=sys.stderr)
+        log_error(f"Error querying distance: {e}", quiet)
         return None
 
 def compute_rate(samples):
@@ -93,6 +98,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Ratemeter daemon")
     parser.add_argument("--log", action="store_true", help="Print log line with rates and details")
     parser.add_argument("--influxdb", action="store_true", help="Enable writing to InfluxDB")
+    parser.add_argument("--quiet", action="store_true", help="Suppress error logging")
     return parser.parse_args()
 
 def main(args):
@@ -104,7 +110,7 @@ def main(args):
         averaged_dists = []
         while True:
             now = time.time()
-            dist = get_distance()
+            dist = get_distance(args.quiet)
             if dist is not None:
                 samples.append((now, dist))
                 recent_dists.append(dist)
