@@ -1,0 +1,16 @@
+[Unit]
+Description=Ratemeter Distance Logger
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/devs/ratemeter
+ExecStart=/usr/bin/python3 /home/pi/devs/ratemeter/ratemeter.py
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
