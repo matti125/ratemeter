@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 
 from statistics import mean
 import urllib.parse
@@ -9,6 +10,7 @@ import json
 from collections import deque
 from scipy.stats import linregress
 import argparse
+import subprocess
 
 OUTPUT_DIR = "/home/pi/ratemeter"
 FILE_SHORTTERM = f"{OUTPUT_DIR}/shortterm"
@@ -16,21 +18,30 @@ FILE_SMOOTHED = f"{OUTPUT_DIR}/smoothed"
 FILE_LONGTERM = f"{OUTPUT_DIR}/longterm"
 FILE_MIDTERM = f"{OUTPUT_DIR}/midterm"
 
-HOST = "http://ratos2.local"
+HOST = "http://localhost"
 INFLUX_HELPER = "/home/pi/devs/zhopper/influx_write_by_line.py"
 INFLUX_BUCKET = "gantry"
 INFLUX_MEASUREMENT = "gantry"
 INTERVAL = 1  # seconds
 SAMPLES_SHORTTERM = 60  # number of samples to use for calculating a rate
-NUMBER_OF_RATES = 20 #number of calculated short-term rates to average
 SAMPLES_MIDTERM = 120  # number of samples to use for mid-term rate
-SAMPLES_LONGTERM = 300 #number of samples to use for long-term rate
+SAMPLES_LONGTERM = 240 #number of samples to use for long-term rate
+NUMBER_OF_RATES = 20 #number of calculated short-term rates to average
 
-import subprocess
 
 # Rolling buffer of (timestamp, distance) tuples
 samples = deque(maxlen=SAMPLES_LONGTERM)
 rate_samples_shortterm = deque(maxlen=NUMBER_OF_RATES)  # store (rate, weight)
+
+
+# Helper to open file for r/w, creating if needed, and initialize with "0\n" if new. 
+# We do not want to ever have an empty file, as klipper seems not to recover when
+# trying to read from it.
+def open_or_create_file(path):
+    if not os.path.exists(path):
+        with open(path, "w") as f:
+            f.write("0\n")
+    return open(path, "r+")
 
 
 
@@ -81,13 +92,14 @@ def write_rate_to_file(file_handle, rate_in_mm_per_s):
 def parse_args():
     parser = argparse.ArgumentParser(description="Ratemeter daemon")
     parser.add_argument("--log", action="store_true", help="Print log line with rates and details")
+    parser.add_argument("--influxdb", action="store_true", help="Enable writing to InfluxDB")
     return parser.parse_args()
 
 def main(args):
-    with open(FILE_SHORTTERM, "w+") as f_short, \
-         open(FILE_MIDTERM, "w+") as f_mid, \
-         open(FILE_LONGTERM, "w+") as f_long, \
-         open(FILE_SMOOTHED, "w+") as f_smooth:
+    with open_or_create_file(FILE_SHORTTERM) as f_short, \
+         open_or_create_file(FILE_MIDTERM) as f_mid, \
+         open_or_create_file(FILE_LONGTERM) as f_long, \
+         open_or_create_file(FILE_SMOOTHED) as f_smooth:
         recent_dists = deque(maxlen=5)
         averaged_dists = []
         while True:
@@ -98,15 +110,16 @@ def main(args):
                 recent_dists.append(dist)
                 if len(recent_dists) == 5:
                     dist_avg = mean(recent_dists)
-                    line = f"{INFLUX_MEASUREMENT} distance={dist_avg:.6f} {int(now * 1e9)}"
-                    try:
-                        subprocess.run(
-                            ["python3", INFLUX_HELPER, "--bucket", INFLUX_BUCKET],
-                            input=line.encode("utf-8"),
-                            check=True
-                        )
-                    except Exception as e:
-                        print(f"Error calling influx_write_by_line.py: {e}", file=sys.stderr)
+                    if args.influxdb:
+                        line = f"{INFLUX_MEASUREMENT} distance={dist_avg:.6f} {int(now * 1e9)}"
+                        try:
+                            subprocess.run(
+                                ["python3", INFLUX_HELPER, "--bucket", INFLUX_BUCKET],
+                                input=line.encode("utf-8"),
+                                check=True
+                            )
+                        except Exception as e:
+                            print(f"Error calling influx_write_by_line.py: {e}", file=sys.stderr)
                     recent_dists.clear()
                 if len(samples) >= 5:
                     shortterm_samples = list(samples)[-SAMPLES_SHORTTERM:]
@@ -133,7 +146,9 @@ def main(args):
                     write_rate_to_file(f_mid, rate_mid)
                     write_rate_to_file(f_long, rate_long)
                     write_rate_to_file(f_smooth, avg_rate)
-            time.sleep(INTERVAL)
+            elapsed = time.time() - now
+            sleep_duration = max(0, INTERVAL - elapsed)
+            time.sleep(sleep_duration)
 
 if __name__ == "__main__":
     args = parse_args()
