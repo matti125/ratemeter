@@ -147,11 +147,14 @@ def main(args):
                                   f"rate_mid={rate_mid*1e6:.2f} r2_mid={r_mid**2:.4f} "
                                   f"rate_long={rate_long*1e6:.2f} r2_long={r_long**2:.4f} "
                                   f"avg_rate={avg_rate*1e6:.2f} nm/s")
-
                     write_rate_to_file(f_short, rate_short)
                     write_rate_to_file(f_mid, rate_mid)
                     write_rate_to_file(f_long, rate_long)
                     write_rate_to_file(f_smooth, avg_rate)
+            else: #there is no data to process, so let us clen up the existing samples
+                cutoff = now - 240  # 4 minutes
+                while samples and samples[0][0] < cutoff:
+                    samples.popleft()
             elapsed = time.time() - now
             sleep_duration = max(0, INTERVAL - elapsed)
             time.sleep(sleep_duration)
